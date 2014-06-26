@@ -106,86 +106,69 @@
 (defn ^:private  ^String encoding [opts]
   (or (:encoding opts) "UTF-8"))
 
-(defn ^:private  ^String compression [opts]
-  (or (:encoding opts) "UTF-8"))
-
 (defn- ^Boolean append? [opts]
   (boolean (:append opts)))
 
-(deftype FileGZ [ fname ])
+;; The implementation below has a disadvantage that compressed streams
+;; come *after* buffered streams which is said do reduce performance
+;;
+;; http://stackoverflow.com/questions/1082320/what-order-should-i-use-gzipoutputstream-and-bufferedoutputstream
+;; http://java-performance.info/java-io-bufferedinputstream-and-java-util-zip-gzipinputstream/
 
-(extend FileGZ
+(deftype ResourceCompr [ resource ])
+
+(defn ^:private make-compressed-input-stream [ input-stream compr ]
+  (case compr
+    "gz"  (GZIPInputStream. input-stream)
+    "bzip2" (BZip2CompressorInputStream. input-stream)
+    "xz" (XZCompressorInputStream. input-stream)
+    nil input-stream
+    (throw
+      (IllegalArgumentException.
+        (str "Unknown compression type " compr ".")))))
+
+(defn ^:private make-compressed-output-stream [ output-stream compr ]
+  (case compr
+    "gz"  (GZIPOutputStream. output-stream)
+    "bzip2" (BZip2CompressorOutputStream. output-stream)
+    "xz" (XZCompressorOutputStream. output-stream)
+    nil output-stream
+    (throw
+      (IllegalArgumentException.
+        (str "Unknown compression type " compr ".")))))
+
+(extend ResourceCompr
   io/IOFactory
   (assoc io/default-streams-impl
     :make-input-stream
       (fn [x opts]
-        (-> (. x fname)
-            FileInputStream.
-            GZIPInputStream.
+        (-> (io/make-input-stream (. x resource) opts)
+            (make-compressed-input-stream (:compr opts))
             (io/make-input-stream opts)))
      :make-output-stream
        (fn [x opts]
-         (-> (. x fname)
-             (FileOutputStream. (append? opts))
-             GZIPOutputStream.
+         (-> (. x resource)
+             (io/make-output-stream (append? opts))
+             (make-compressed-output-stream (:compr opts))
              (io/make-output-stream opts)))))
 
-(deftype FileBZIP2 [ fname ])
+(defn reader* [ x & opts ]
+  (io/make-reader (ResourceCompr. x) (when opts (apply hash-map opts))))
 
-(extend FileBZIP2
-  io/IOFactory
-  (assoc io/default-streams-impl
-    :make-input-stream
-      (fn [x opts]
-        (-> (. x fname)
-            FileInputStream.
-            BZip2CompressorInputStream.
-            (io/make-input-stream opts)))
-     :make-output-stream
-       (fn [x opts]
-         (-> (. x fname)
-             (FileOutputStream. (append? opts))
-             BZip2CompressorOutputStream.
-             (io/make-output-stream opts)))))
-
-(deftype FileXZ [ fname ])
-
-(extend FileXZ
-  io/IOFactory
-  (assoc io/default-streams-impl
-    :make-input-stream
-      (fn [x opts]
-        (-> (. x fname)
-            FileInputStream.
-            XZCompressorInputStream.
-            (io/make-input-stream opts)))
-     :make-output-stream
-       (fn [x opts]
-         (-> (. x fname)
-             (FileOutputStream. (append? opts))
-             XZCompressorOutputStream.
-             (io/make-output-stream opts)))))
-
-(defn gz-reader [ fname & opts ]
-  (io/make-reader (FileGZ. fname) (when opts (apply hash-map opts))))
-
-(defn bzip2-reader [ fname & opts ]
-  (io/make-reader (FileBZIP2. fname) (when opts (apply hash-map opts))))
-
-(defn xz-reader [ fname & opts ]
-  (io/make-reader (FileXZ. fname) (when opts (apply hash-map opts))))
-
-(defn gz-writer [ fname & opts ]
-  (io/make-writer (FileGZ. fname) (when opts (apply hash-map opts))))
-
-(defn bzip2-writer [ fname & opts ]
-  (io/make-writer (FileBZIP2. fname) (when opts (apply hash-map opts))))
-
-(defn xz-writer [ fname & opts]
-  (io/make-writer (FileXZ. fname) (when opts (apply hash-map opts))))
+(defn writer* [ x & opts ]
+  (io/make-writer (ResourceCompr. x) (when opts (apply hash-map opts))))
 
 (defn slurp*
-  [ fname & options])
+  [ f & opts ]
+  (apply
+    slurp
+    (apply reader* f opts)
+    opts))
 
 (defn spit*
-  [ fname & options])
+  [ f content & opts ]
+  (apply
+     spit
+     (apply writer* f opts)
+     content
+     opts))

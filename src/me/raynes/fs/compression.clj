@@ -2,11 +2,16 @@
   "Compression utilities."
   (:require [clojure.java.io :as io]
             [me.raynes.fs :as fs])
-  (:import (java.util.zip ZipFile GZIPInputStream)
+  (:import (java.io FileInputStream InputStreamReader BufferedReader
+                    FileOutputStream OutputStreamWriter BufferedOutputStream)
+           (java.util.zip ZipFile GZIPInputStream  GZIPOutputStream)
            (org.apache.commons.compress.archivers.tar TarArchiveInputStream
                                                       TarArchiveEntry)
-           (org.apache.commons.compress.compressors bzip2.BZip2CompressorInputStream
-                                                    xz.XZCompressorInputStream)))
+           (org.apache.commons.compress.compressors
+                    bzip2.BZip2CompressorInputStream
+                    bzip2.BZip2CompressorOutputStream
+                       xz.XZCompressorInputStream
+                       xz.XZCompressorOutputStream)))
 
 (defn unzip
   "Takes the path to a zipfile source and unzips it to target-dir."
@@ -97,3 +102,90 @@
   ([source target]
     (io/copy (-> source fs/file io/input-stream XZCompressorInputStream.)
              (fs/file target))))
+
+(defn ^:private  ^String encoding [opts]
+  (or (:encoding opts) "UTF-8"))
+
+(defn ^:private  ^String compression [opts]
+  (or (:encoding opts) "UTF-8"))
+
+(defn- ^Boolean append? [opts]
+  (boolean (:append opts)))
+
+(deftype FileGZ [ fname ])
+
+(extend FileGZ
+  io/IOFactory
+  (assoc io/default-streams-impl
+    :make-input-stream
+      (fn [x opts]
+        (-> (. x fname)
+            FileInputStream.
+            GZIPInputStream.
+            (io/make-input-stream opts)))
+     :make-output-stream
+       (fn [x opts]
+         (-> (. x fname)
+             (FileOutputStream. (append? opts))
+             GZIPOutputStream.
+             (io/make-output-stream opts)))))
+
+(deftype FileBZIP2 [ fname ])
+
+(extend FileBZIP2
+  io/IOFactory
+  (assoc io/default-streams-impl
+    :make-input-stream
+      (fn [x opts]
+        (-> (. x fname)
+            FileInputStream.
+            BZip2CompressorInputStream.
+            (io/make-input-stream opts)))
+     :make-output-stream
+       (fn [x opts]
+         (-> (. x fname)
+             (FileOutputStream. (append? opts))
+             BZip2CompressorOutputStream.
+             (io/make-output-stream opts)))))
+
+(deftype FileXZ [ fname ])
+
+(extend FileXZ
+  io/IOFactory
+  (assoc io/default-streams-impl
+    :make-input-stream
+      (fn [x opts]
+        (-> (. x fname)
+            FileInputStream.
+            XZCompressorInputStream.
+            (io/make-input-stream opts)))
+     :make-output-stream
+       (fn [x opts]
+         (-> (. x fname)
+             (FileOutputStream. (append? opts))
+             XZCompressorOutputStream.
+             (io/make-output-stream opts)))))
+
+(defn gz-reader [ fname & opts ]
+  (io/make-reader (FileGZ. fname) (when opts (apply hash-map opts))))
+
+(defn bzip2-reader [ fname & opts ]
+  (io/make-reader (FileBZIP2. fname) (when opts (apply hash-map opts))))
+
+(defn xz-reader [ fname & opts ]
+  (io/make-reader (FileXZ. fname) (when opts (apply hash-map opts))))
+
+(defn gz-writer [ fname & opts ]
+  (io/make-writer (FileGZ. fname) (when opts (apply hash-map opts))))
+
+(defn bzip2-writer [ fname & opts ]
+  (io/make-writer (FileBZIP2. fname) (when opts (apply hash-map opts))))
+
+(defn xz-writer [ fname & opts]
+  (io/make-writer (FileXZ. fname) (when opts (apply hash-map opts))))
+
+(defn slurp*
+  [ fname & options])
+
+(defn spit*
+  [ fname & options])
